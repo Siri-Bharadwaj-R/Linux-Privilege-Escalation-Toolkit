@@ -1,0 +1,30 @@
+{
+  "high_risk": [
+    "awk",
+    "bash",
+    "busybox",
+    "cp",
+    "env",
+    "find",
+    "less",
+    "more",
+    "nano",
+    "nmap",
+    "perl",
+    "python",
+    "python3",
+    "ruby",
+    "sh",
+    "tar",
+    "vim",
+    "vi"
+  ],
+  "medium_risk": [
+    "mount",
+    "umount",
+    "ssh",
+    "scp",
+    "rsync",
+    "tee"
+  ]
+}
