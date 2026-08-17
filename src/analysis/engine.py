@@ -65,11 +65,18 @@ class AnalysisEngine:
         findings = []
 
         for binary in data.get("risky_binaries", []):
+
+            target = (
+                binary.get("path", "Unknown")
+                if isinstance(binary, dict)
+                else binary
+            )
+
             findings.append(
                 Finding(
                     title="Potentially Risky SUID/SGID Binary",
                     severity="High",
-                    target=binary,
+                    target=target,
                     description=(
                         "A binary with elevated SUID or SGID "
                         "permissions matches a predefined "
@@ -139,10 +146,16 @@ class AnalysisEngine:
             {}
         ).items():
 
+            if not details.get("exists"):
+                continue
+
             if details.get("world_writable"):
                 findings.append(
                     Finding(
-                        title="Sensitive System File Is World-Writable",
+                        title=(
+                            "Sensitive System File Is "
+                            "World-Writable"
+                        ),
                         severity="Critical",
                         target=path,
                         description=(
@@ -153,6 +166,104 @@ class AnalysisEngine:
                         mitigation=(
                             "Immediately restore secure ownership "
                             "and permissions."
+                        ),
+                        category="Permissions",
+                    )
+                )
+
+            elif details.get("group_writable"):
+                findings.append(
+                    Finding(
+                        title=(
+                            "Sensitive System File Is "
+                            "Group-Writable"
+                        ),
+                        severity="High",
+                        target=path,
+                        description=(
+                            "A sensitive system file can be "
+                            "modified by members of its group. "
+                            "This should be reviewed to ensure "
+                            "only trusted administrators have "
+                            "write access."
+                        ),
+                        mitigation=(
+                            "Restrict group write permissions "
+                            "and verify file ownership."
+                        ),
+                        category="Permissions",
+                    )
+                )
+
+            if (
+                path == "/etc/shadow"
+                and details.get("world_readable")
+            ):
+                findings.append(
+                    Finding(
+                        title="Shadow File Is World-Readable",
+                        severity="Critical",
+                        target=path,
+                        description=(
+                            "The system password hash file is "
+                            "readable by all users, exposing "
+                            "credential hashes."
+                        ),
+                        mitigation=(
+                            "Immediately restrict permissions so "
+                            "only root and the appropriate system "
+                            "group can access the file."
+                        ),
+                        category="Permissions",
+                    )
+                )
+
+            if (
+                path == "/etc/sudoers"
+                and details.get("world_readable")
+            ):
+                findings.append(
+                    Finding(
+                        title="Sudoers File Is World-Readable",
+                        severity="High",
+                        target=path,
+                        description=(
+                            "The sudo configuration is readable "
+                            "by all users. Review permissions and "
+                            "ensure the file is protected."
+                        ),
+                        mitigation=(
+                            "Restrict sudoers file permissions "
+                            "to authorized administrators."
+                        ),
+                        category="Permissions",
+                    )
+                )
+
+        for home in data.get(
+            "home_permissions",
+            []
+        ):
+
+            if home.get("world_writable"):
+                findings.append(
+                    Finding(
+                        title=(
+                            "World-Writable Home Directory "
+                            "Detected"
+                        ),
+                        severity="High",
+                        target=home.get("path", "Unknown"),
+                        description=(
+                            "A user's home directory is writable "
+                            "by all local users, which may allow "
+                            "unauthorized modification of "
+                            "configuration files or executables."
+                        ),
+                        mitigation=(
+                            "Restrict write permissions so only "
+                            "the directory owner and authorized "
+                            "administrators can modify it."
                         ),
                         category="Permissions",
                     )
