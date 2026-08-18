@@ -1,6 +1,7 @@
 import os
 import stat
 import subprocess
+import pwd
 
 
 class CronCollector:
@@ -16,6 +17,9 @@ class CronCollector:
     - /etc/cron.weekly
     - /etc/cron.monthly
     - /etc/cron.yearly
+    - Root/system-level cron jobs
+    - Writable cron job files
+    - Writable scripts executed by root cron jobs
     """
 
     def __init__(self):
@@ -47,12 +51,19 @@ class CronCollector:
             cron_directories
         )
 
+        writable_root_scripts = (
+            self._find_writable_root_scripts(
+                root_executed_jobs
+            )
+        )
+
         return {
             "user_crontab": user_crontab,
             "system_crontab": system_crontab,
             "cron_directories": cron_directories,
             "root_executed_jobs": root_executed_jobs,
             "writable_jobs": writable_jobs,
+            "writable_root_scripts": writable_root_scripts,
         }
 
     def _get_user_crontab(self) -> dict:
@@ -182,6 +193,9 @@ class CronCollector:
                                 ),
                                 "uid": file_stat.st_uid,
                                 "gid": file_stat.st_gid,
+                                "owner": self._get_username(
+                                    file_stat.st_uid
+                                ),
                                 "world_writable": bool(
                                     file_stat.st_mode
                                     & stat.S_IWOTH
@@ -223,12 +237,8 @@ class CronCollector:
         cron_directories: dict,
     ) -> list:
         """
-        Identify jobs that are explicitly configured to run
-        as root, plus scripts located in system cron folders.
-
-        Files in /etc/cron.hourly, daily, weekly, monthly,
-        and yearly are system-level scheduled jobs and are
-        recorded separately for reporting.
+        Identify jobs explicitly configured to run as root,
+        along with system-level cron directory scripts.
         """
 
         root_jobs = []
@@ -236,24 +246,35 @@ class CronCollector:
         for entry in system_crontab.get("entries", []):
             parts = entry.split()
 
-            # System crontab format:
+            # /etc/crontab format:
             # minute hour day month weekday user command
             if len(parts) >= 7 and parts[5] == "root":
+
+                command = " ".join(parts[6:])
+
                 root_jobs.append(
                     {
                         "source": "/etc/crontab",
                         "entry": entry,
                         "user": "root",
+                        "command": command,
+                        "schedule": " ".join(parts[:5]),
                     }
                 )
 
         for directory, data in cron_directories.items():
+
             for job in data.get("jobs", []):
+
                 root_jobs.append(
                     {
                         "source": directory,
                         "entry": job["path"],
                         "user": "system",
+                        "command": job["path"],
+                        "schedule": self._get_directory_schedule(
+                            directory
+                        ),
                     }
                 )
 
@@ -270,11 +291,14 @@ class CronCollector:
         writable_jobs = []
 
         for directory, data in cron_directories.items():
+
             for job in data.get("jobs", []):
+
                 if (
                     job["world_writable"]
                     or job["group_writable"]
                 ):
+
                     writable_jobs.append(
                         {
                             "source": directory,
@@ -290,3 +314,133 @@ class CronCollector:
                     )
 
         return writable_jobs
+
+    def _find_writable_root_scripts(
+        self,
+        root_jobs: list,
+    ) -> list:
+        """
+        Check whether files directly referenced by root or
+        system-level cron jobs are writable by non-privileged
+        users.
+        """
+
+        writable_scripts = []
+
+        for job in root_jobs:
+
+            command = job.get("command", "")
+
+            executable_path = self._extract_executable_path(
+                command
+            )
+
+            if not executable_path:
+                continue
+
+            if not os.path.isfile(executable_path):
+                continue
+
+            try:
+                file_stat = os.stat(executable_path)
+
+                world_writable = bool(
+                    file_stat.st_mode & stat.S_IWOTH
+                )
+
+                group_writable = bool(
+                    file_stat.st_mode & stat.S_IWGRP
+                )
+
+                if world_writable or group_writable:
+
+                    writable_scripts.append(
+                        {
+                            "cron_source": job["source"],
+                            "cron_user": job["user"],
+                            "schedule": job.get(
+                                "schedule",
+                                "Unknown",
+                            ),
+                            "command": command,
+                            "script": executable_path,
+                            "mode": stat.filemode(
+                                file_stat.st_mode
+                            ),
+                            "owner": self._get_username(
+                                file_stat.st_uid
+                            ),
+                            "world_writable": world_writable,
+                            "group_writable": group_writable,
+                        }
+                    )
+
+            except (
+                PermissionError,
+                FileNotFoundError,
+                OSError,
+            ):
+                continue
+
+        return writable_scripts
+
+    def _extract_executable_path(
+        self,
+        command: str,
+    ) -> str | None:
+        """
+        Attempt to extract a directly referenced executable
+        or script path from a cron command.
+
+        This intentionally performs detection only and does
+        not execute any discovered command.
+        """
+
+        if not command:
+            return None
+
+        parts = command.split()
+
+        for part in parts:
+
+            if part.startswith("/"):
+                return part
+
+        return None
+
+    def _get_directory_schedule(
+        self,
+        directory: str,
+    ) -> str:
+        """
+        Return a human-readable schedule for standard
+        cron directories.
+        """
+
+        schedules = {
+            "/etc/cron.hourly": "Hourly",
+            "/etc/cron.daily": "Daily",
+            "/etc/cron.weekly": "Weekly",
+            "/etc/cron.monthly": "Monthly",
+            "/etc/cron.yearly": "Yearly",
+            "/etc/cron.d": "Defined in cron configuration",
+        }
+
+        return schedules.get(
+            directory,
+            "System scheduled",
+        )
+
+    def _get_username(
+        self,
+        uid: int,
+    ) -> str:
+        """
+        Resolve a UID to a username safely.
+        """
+
+        try:
+            return pwd.getpwuid(uid).pw_name
+
+        except KeyError:
+            return str(uid)
