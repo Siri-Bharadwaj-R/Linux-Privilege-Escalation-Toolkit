@@ -336,28 +336,73 @@ class AnalysisEngine:
         return findings
 
     def _analyze_cron(self, data: dict) -> list:
+        """
+        Analyze scheduled tasks for privilege escalation risks.
+
+        Higher severity is assigned when a writable script is
+        associated with a job executed with root privileges.
+        """
+
         findings = []
 
+        # Writable cron jobs
         for job in data.get("writable_jobs", []):
+
+            severity = "High"
+
+            if job.get("world_writable"):
+                severity = "Critical"
+
             findings.append(
                 Finding(
                     title="Writable Scheduled Job",
-                    severity="High",
+                    severity=severity,
                     target=job.get("path", "Unknown"),
                     description=(
-                        "A system scheduled job is writable by "
-                        "group members or other users."
+                        "A scheduled job is writable by group "
+                        "members or other users. If the job is "
+                        "executed by a privileged account, this "
+                        "could allow unauthorized code execution."
                     ),
                     mitigation=(
-                        "Ensure scheduled jobs are owned by root "
-                        "and are not writable by untrusted users."
+                        "Ensure scheduled jobs are owned by trusted "
+                        "administrators and are not writable by "
+                        "untrusted users."
+                    ),
+                    category="Cron",
+                )
+            )
+
+        # Writable scripts associated with root execution
+        for script in data.get("writable_root_scripts", []):
+
+            severity = "Critical"
+
+            if not script.get("world_writable"):
+                severity = "High"
+
+            findings.append(
+                Finding(
+                    title="Writable Script Executed by Root",
+                    severity=severity,
+                    target=script.get("path", "Unknown"),
+                    description=(
+                        "A script associated with a root-executed "
+                        "scheduled task is writable by a "
+                        "non-privileged user. This may allow "
+                        "privileged code execution."
+                    ),
+                    mitigation=(
+                        "Restrict write access to the script and "
+                        "ensure it is owned by root or another "
+                        "trusted administrator."
                     ),
                     category="Cron",
                 )
             )
 
         return findings
-
+    
     def _analyze_services(self, data: dict) -> list:
         findings = []
 
