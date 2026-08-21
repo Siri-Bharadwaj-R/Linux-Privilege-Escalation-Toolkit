@@ -339,67 +339,87 @@ class AnalysisEngine:
         """
         Analyze scheduled tasks for privilege escalation risks.
 
-        Higher severity is assigned when a writable script is
-        associated with a job executed with root privileges.
+        Writable scheduled jobs are correlated with jobs that
+        execute at the system level to identify higher-risk
+        privilege escalation opportunities.
         """
 
         findings = []
 
-        # Writable cron jobs
+        root_job_paths = {
+            job.get("entry")
+            for job in data.get("root_executed_jobs", [])
+            if job.get("entry")
+        }
+
         for job in data.get("writable_jobs", []):
 
-            severity = "High"
-
-            if job.get("world_writable"):
-                severity = "Critical"
-
-            findings.append(
-                Finding(
-                    title="Writable Scheduled Job",
-                    severity=severity,
-                    target=job.get("path", "Unknown"),
-                    description=(
-                        "A scheduled job is writable by group "
-                        "members or other users. If the job is "
-                        "executed by a privileged account, this "
-                        "could allow unauthorized code execution."
-                    ),
-                    mitigation=(
-                        "Ensure scheduled jobs are owned by trusted "
-                        "administrators and are not writable by "
-                        "untrusted users."
-                    ),
-                    category="Cron",
-                )
+            path = job.get("path", "Unknown")
+            world_writable = job.get(
+                "world_writable",
+                False,
             )
 
-        # Writable scripts associated with root execution
-        for script in data.get("writable_root_scripts", []):
+            is_root_executed = path in root_job_paths
 
-            severity = "Critical"
+            if is_root_executed:
 
-            if not script.get("world_writable"):
-                severity = "High"
-
-            findings.append(
-                Finding(
-                    title="Writable Script Executed by Root",
-                    severity=severity,
-                    target=script.get("path", "Unknown"),
-                    description=(
-                        "A script associated with a root-executed "
-                        "scheduled task is writable by a "
-                        "non-privileged user. This may allow "
-                        "privileged code execution."
-                    ),
-                    mitigation=(
-                        "Restrict write access to the script and "
-                        "ensure it is owned by root or another "
-                        "trusted administrator."
-                    ),
-                    category="Cron",
+                severity = (
+                    "Critical"
+                    if world_writable
+                    else "High"
                 )
-            )
+
+                findings.append(
+                    Finding(
+                        title=(
+                            "Writable Scheduled Job Executed "
+                            "by System"
+                        ),
+                        severity=severity,
+                        target=path,
+                        description=(
+                            "A writable scheduled job is located "
+                            "in a system-level cron directory and "
+                            "may be executed with elevated system "
+                            "privileges. This could allow "
+                            "unauthorized code execution."
+                        ),
+                        mitigation=(
+                            "Ensure the scheduled job is owned by "
+                            "root or another trusted administrator "
+                            "and remove unnecessary write access."
+                        ),
+                        category="Cron",
+                    )
+                )
+
+            else:
+
+                severity = (
+                    "Critical"
+                    if world_writable
+                    else "High"
+                )
+
+                findings.append(
+                    Finding(
+                        title="Writable Scheduled Job",
+                        severity=severity,
+                        target=path,
+                        description=(
+                            "A scheduled job is writable by group "
+                            "members or other users. Review whether "
+                            "a privileged account executes this job."
+                        ),
+                        mitigation=(
+                            "Ensure scheduled jobs are owned by "
+                            "trusted administrators and are not "
+                            "writable by untrusted users."
+                        ),
+                        category="Cron",
+                    )
+                )
 
         return findings
     
