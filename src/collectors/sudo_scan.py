@@ -86,10 +86,11 @@ class SudoCollector:
 
     def _find_risky_commands(self, output: str) -> list:
         """
-        Identify potentially risky commands allowed through sudo.
+        Identify potentially risky commands explicitly allowed
+        through sudo rules.
         """
 
-        risky_commands = [
+        risky_commands = {
             "awk",
             "bash",
             "busybox",
@@ -109,14 +110,30 @@ class SudoCollector:
             "tee",
             "vi",
             "vim",
-        ]
+        }
 
-        detected = []
+        detected = set()
 
-        output_lower = output.lower()
+        for line in output.splitlines():
 
-        for command in risky_commands:
-            if command in output_lower:
-                detected.append(command)
+            normalized_line = line.strip()
 
-        return sorted(set(detected))
+            if not normalized_line:
+                continue
+
+            for command in risky_commands:
+
+                command_patterns = [
+                    f"/{command}",
+                    f" {command}",
+                    f",{command}",
+                    f", {command}",
+                ]
+
+                if any(
+                    pattern in normalized_line.lower()
+                    for pattern in command_patterns
+                ):
+                    detected.add(command)
+
+        return sorted(detected)
